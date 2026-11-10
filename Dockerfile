@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY data ./data
 RUN mkdir -p /app/models && chown -R fastapi:fastapi /app
 USER fastapi
 

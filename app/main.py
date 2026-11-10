@@ -1,11 +1,19 @@
 """FastAPI 추천 서비스 진입점입니다."""
 
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
+from pydantic import Field
 
 from app.config import settings
-from app.schemas import HealthResponse
+from app.recommender import recommender
+from app.schemas import (
+    ContextPreferenceRequest,
+    HealthResponse,
+    RecommendationResult,
+    TastePreferenceRequest,
+)
 
 
 app = FastAPI(
@@ -28,4 +36,29 @@ async def health() -> HealthResponse:
         status="UP",
         timestamp=datetime.now(UTC),
     )
+
+
+PreferenceRequest = Annotated[
+    ContextPreferenceRequest | TastePreferenceRequest,
+    Field(discriminator="recommendation_mode"),
+]
+
+
+@app.post(
+    "/api/recommend/games",
+    response_model=RecommendationResult,
+    tags=["recommendation"],
+)
+async def recommend_games(
+    preference: PreferenceRequest,
+    limit: int = Query(12, ge=1, le=50),
+) -> RecommendationResult:
+    """현재 상황 또는 좋아한 게임을 바탕으로 BGG 카탈로그를 추천합니다."""
+
+    try:
+        items = recommender.recommend(preference, limit)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    strategy = "content-item-hybrid" if isinstance(preference, TastePreferenceRequest) else "content-based"
+    return RecommendationResult(items=items, strategy=strategy)
 
