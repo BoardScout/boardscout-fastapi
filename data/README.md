@@ -19,3 +19,12 @@ python scripts/build_item_neighbors.py \
   /path/to/ML_RecSys/data/experiment_10k/train.csv \
   data/models/item_neighbors.json
 ```
+
+MySQL 기본 카탈로그는 다음처럼 반복 실행해도 안전하게 적재할 수 있습니다. 한국어 이름·설명과
+이미지 URL은 BGG API 승인 뒤 별도 보강하며, 이 명령은 기존 현지화 필드를 덮어쓰지 않습니다.
+
+```bash
+python scripts/export_mysql_catalog.py \
+  | docker exec -i boardscout-mysql sh -lc \
+  'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"'
+```
