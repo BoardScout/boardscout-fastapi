@@ -2,15 +2,35 @@
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+ResponseData = TypeVar("ResponseData")
 
 
 class ApiModel(BaseModel):
-    """Python에서는 snake_case, JSON에서는 camelCase를 사용하는 공통 모델입니다."""
+    """Python은 snake_case, JSON은 camelCase를 사용하는 공통 모델입니다."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class ApiResponse(ApiModel, Generic[ResponseData]):
+    """Spring API와 동일한 성공/실패 응답 계약입니다."""
+
+    success: bool
+    code: str
+    message: str
+    result: ResponseData | None = None
+
+    @classmethod
+    def ok(
+        cls,
+        result: ResponseData,
+        message: str = "요청에 성공했습니다.",
+    ) -> "ApiResponse[ResponseData]":
+        return cls(success=True, code="COMMON-200", message=message, result=result)
 
 
 class Theme(StrEnum):
@@ -50,6 +70,17 @@ class TastePreferenceRequest(ApiModel):
     recommendation_mode: Literal["taste"] = Field("taste", alias="recommendationMode")
     liked_game_ids: list[int] = Field(alias="likedGameIds", min_length=3, max_length=20)
 
+    @field_validator("liked_game_ids")
+    @classmethod
+    def validate_liked_game_ids(cls, value: list[int]) -> list[int]:
+        """중복 선택으로 '3개 이상' 조건을 우회하지 못하게 합니다."""
+
+        if any(item_id < 0 for item_id in value):
+            raise ValueError("게임 ID는 0 이상이어야 합니다")
+        if len(set(value)) != len(value):
+            raise ValueError("likedGameIds에는 중복된 게임 ID를 넣을 수 없습니다")
+        return value
+
 
 class RecommendationItem(ApiModel):
     game_id: int = Field(alias="gameId")
@@ -77,4 +108,19 @@ class HealthResponse(ApiModel):
     service: str
     status: str
     timestamp: datetime
+
+
+class UserSessionResponse(ApiModel):
+    """Spring이 Redis에 저장한 세션에서 복원한 최소 사용자 정보입니다."""
+
+    user_id: int = Field(alias="userId")
+    email: str
+    nickname: str
+    role: str
+
+
+class ErrorDetail(ApiModel):
+    """클라이언트가 표시할 수 있는 요청 필드별 오류입니다."""
+
+    errors: dict[str, str] = Field(default_factory=dict)
 

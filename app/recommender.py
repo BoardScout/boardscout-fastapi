@@ -162,7 +162,9 @@ class ContentBasedRecommender:
     def recommend_context(
         self, preference: ContextPreferenceRequest, limit: int = 12
     ) -> list[RecommendationItem]:
+        # 1단계: 화면의 3단계 난이도를 BGG complexity 점수의 중심값으로 바꿉니다.
         target_complexity = DIFFICULTY_CENTERS[preference.difficulty]
+        # 2단계: 인원과 시간은 점수가 아니라 실제 플레이 가능 여부로 먼저 거릅니다.
         candidates = [
             game
             for game in self.games
@@ -171,6 +173,7 @@ class ContentBasedRecommender:
         ]
         scored = []
         for game in candidates:
+            # 3단계: 난이도·테마·방식·평점을 0~1 신호로 정규화해 가중 합산합니다.
             theme_overlap = len(set(preference.themes) & set(game.themes))
             style_overlap = len(set(preference.play_styles) & set(game.play_styles))
             complexity_match = max(0.0, 1.0 - abs(game.complexity - target_complexity) / 3.0)
@@ -179,15 +182,18 @@ class ContentBasedRecommender:
                 1.0, style_overlap / 2
             ) + 0.10 * rating_quality
             scored.append((score, game))
+        # 4단계: 동점이면 검증된 평점과 고정 ID를 사용해 결과 순서를 안정적으로 유지합니다.
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
     def recommend_taste(
         self, preference: TastePreferenceRequest, limit: int = 12
     ) -> list[RecommendationItem]:
+        # 1단계: 요청 ID 중 실제 카탈로그에 있는 게임만 취향 학습 입력으로 사용합니다.
         liked = [self.by_id[item_id] for item_id in preference.liked_game_ids if item_id in self.by_id]
         if len(liked) < 3:
             raise ValueError("likedGameIds에는 카탈로그에 존재하는 게임이 3개 이상 필요합니다")
+        # 2단계: 좋아한 게임 벡터를 합치고 길이를 1로 맞춰 사용자 취향 벡터를 만듭니다.
         profile: Counter[str] = Counter()
         for game in liked:
             profile.update(self.vectors[game.item_id])
@@ -196,7 +202,7 @@ class ContentBasedRecommender:
         average_complexity = sum(game.complexity for game in liked) / len(liked)
         excluded = set(preference.liked_game_ids)
         collaborative = Counter()
-        # 선택한 게임들의 이웃 점수를 합쳐 여러 취향에 공통으로 가까운 게임을 우선한다.
+        # 3단계: 선택한 게임들의 이웃 점수를 합쳐 공통으로 가까운 후보를 찾습니다.
         for item_id in excluded:
             collaborative.update(self.neighbors.get(item_id, {}))
         collaborative_scale = max(collaborative.values(), default=1.0)
@@ -204,12 +210,14 @@ class ContentBasedRecommender:
         for game in self.games:
             if game.item_id in excluded:
                 continue
+            # 4단계: 아이템 이웃 점수를 중심으로 콘텐츠·난이도·평점 신호를 보완합니다.
             similarity = self._cosine(normalized_profile, self.vectors[game.item_id])
             complexity_match = max(0.0, 1.0 - abs(game.complexity - average_complexity) / 3.0)
             rating_quality = max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
             item_cf = collaborative[game.item_id] / collaborative_scale
             score = 0.60 * item_cf + 0.25 * similarity + 0.10 * complexity_match + 0.05 * rating_quality
             scored.append((score, game))
+        # 5단계: 이미 좋아한 게임은 제외하고 점수가 높은 순서로 필요한 개수만 반환합니다.
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 

@@ -10,6 +10,8 @@ def test_health() -> None:
     response = client.get("/api/recommend/health")
 
     assert response.status_code == 200
-    assert response.json()["service"] == "boardgame-recommendation"
-    assert response.json()["status"] == "UP"
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["result"]["service"] == "boardgame-recommendation"
+    assert payload["result"]["status"] == "UP"
 

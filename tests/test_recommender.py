@@ -66,7 +66,7 @@ def test_recommendation_api_accepts_frontend_contract() -> None:
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    payload = response.json()["result"]
     assert payload["strategy"] == "content-based"
     assert len(payload["items"]) == 5
 
@@ -78,4 +78,22 @@ def test_taste_api_reports_hybrid_strategy() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["strategy"] == "content-item-hybrid"
+    assert response.json()["result"]["strategy"] == "content-item-hybrid"
+
+
+def test_recommendation_api_returns_common_validation_error() -> None:
+    response = TestClient(app).post(
+        "/api/recommend/games",
+        json={
+            "recommendationMode": "context",
+            "playerCount": 0,
+            "maxPlayTime": 5,
+            "difficulty": 4,
+        },
+    )
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["code"] == "COMMON-422"
+    assert "context.playerCount" in payload["result"]["errors"]

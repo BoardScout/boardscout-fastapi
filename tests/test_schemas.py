@@ -43,3 +43,10 @@ def test_taste_preference_requires_three_known_game_ids() -> None:
         TastePreferenceRequest.model_validate(
             {"recommendationMode": "taste", "likedGameIds": [0, 1]}
         )
+
+
+def test_taste_preference_rejects_duplicate_game_ids() -> None:
+    with pytest.raises(ValidationError):
+        TastePreferenceRequest.model_validate(
+            {"recommendationMode": "taste", "likedGameIds": [0, 0, 1]}
+        )
