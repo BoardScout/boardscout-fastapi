@@ -163,13 +163,14 @@ class ContentBasedRecommender:
     def _rating_affinity(
         self, ratings: Iterable[UserGameRating]
     ) -> tuple[set[int], dict[int, float]]:
-        """BGG 10점 별점을 기존 아이템 이웃에 투영해 개인화 신호를 만듭니다."""
+        """이미 평가한 게임 ID와 별점으로 계산한 이웃 게임별 보정 점수를 반환한다."""
 
         known = [rating for rating in ratings if rating.dataset_item_id in self.by_id]
         excluded = {rating.dataset_item_id for rating in known}
         weighted = Counter()
         total_weight = 0.0
         for rating in known:
+            # 1~10점의 중간값인 5.5점을 기준으로 -1~1 범위의 신호를 만든다.
             signal = (rating.rating - 5.5) / 4.5
             if math.isclose(signal, 0.0):
                 continue
@@ -178,6 +179,7 @@ class ContentBasedRecommender:
                 weighted[candidate_id] += similarity * signal
         if total_weight == 0:
             return excluded, {}
+        # 별점이 많을수록 보정 점수의 범위가 커지지 않도록 전체 신호의 절댓값 합으로 나눈다.
         return excluded, {
             candidate_id: score / total_weight for candidate_id, score in weighted.items()
         }
