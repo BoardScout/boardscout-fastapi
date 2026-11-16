@@ -17,6 +17,7 @@ from app.schemas import (
     RecommendationItem,
     Theme,
     TastePreferenceRequest,
+    UserGameRating,
 )
 
 
@@ -159,16 +160,43 @@ class ContentBasedRecommender:
             left, right = right, left
         return sum(value * right.get(token, 0.0) for token, value in left.items())
 
+    def _rating_affinity(
+        self, ratings: Iterable[UserGameRating]
+    ) -> tuple[set[int], dict[int, float]]:
+        """BGG 10점 별점을 기존 아이템 이웃에 투영해 개인화 신호를 만듭니다."""
+
+        known = [rating for rating in ratings if rating.dataset_item_id in self.by_id]
+        excluded = {rating.dataset_item_id for rating in known}
+        weighted = Counter()
+        total_weight = 0.0
+        for rating in known:
+            signal = (rating.rating - 5.5) / 4.5
+            if math.isclose(signal, 0.0):
+                continue
+            total_weight += abs(signal)
+            for candidate_id, similarity in self.neighbors.get(rating.dataset_item_id, {}).items():
+                weighted[candidate_id] += similarity * signal
+        if total_weight == 0:
+            return excluded, {}
+        return excluded, {
+            candidate_id: score / total_weight for candidate_id, score in weighted.items()
+        }
+
     def recommend_context(
-        self, preference: ContextPreferenceRequest, limit: int = 12
+        self,
+        preference: ContextPreferenceRequest,
+        limit: int = 12,
+        ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
         # 1단계: 화면의 3단계 난이도를 BGG complexity 점수의 중심값으로 바꿉니다.
         target_complexity = DIFFICULTY_CENTERS[preference.difficulty]
         # 2단계: 인원과 시간은 점수가 아니라 실제 플레이 가능 여부로 먼저 거릅니다.
+        rated_ids, affinity = self._rating_affinity(ratings)
         candidates = [
             game
             for game in self.games
-            if game.min_players <= preference.player_count <= game.max_players
+            if game.item_id not in rated_ids
+            and game.min_players <= preference.player_count <= game.max_players
             and game.max_playtime <= preference.max_play_time
         ]
         scored = []
@@ -181,13 +209,17 @@ class ContentBasedRecommender:
             score = 0.35 * complexity_match + 0.30 * min(1.0, theme_overlap / 2) + 0.25 * min(
                 1.0, style_overlap / 2
             ) + 0.10 * rating_quality
+            score += 0.20 * affinity.get(game.item_id, 0.0)
             scored.append((score, game))
         # 4단계: 동점이면 검증된 평점과 고정 ID를 사용해 결과 순서를 안정적으로 유지합니다.
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
     def recommend_taste(
-        self, preference: TastePreferenceRequest, limit: int = 12
+        self,
+        preference: TastePreferenceRequest,
+        limit: int = 12,
+        ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
         # 1단계: 요청 ID 중 실제 카탈로그에 있는 게임만 취향 학습 입력으로 사용합니다.
         liked = [self.by_id[item_id] for item_id in preference.liked_game_ids if item_id in self.by_id]
@@ -200,10 +232,11 @@ class ContentBasedRecommender:
         profile_norm = math.sqrt(sum(value * value for value in profile.values())) or 1.0
         normalized_profile = {token: value / profile_norm for token, value in profile.items()}
         average_complexity = sum(game.complexity for game in liked) / len(liked)
-        excluded = set(preference.liked_game_ids)
+        rated_ids, affinity = self._rating_affinity(ratings)
+        excluded = set(preference.liked_game_ids) | rated_ids
         collaborative = Counter()
         # 3단계: 선택한 게임들의 이웃 점수를 합쳐 공통으로 가까운 후보를 찾습니다.
-        for item_id in excluded:
+        for item_id in preference.liked_game_ids:
             collaborative.update(self.neighbors.get(item_id, {}))
         collaborative_scale = max(collaborative.values(), default=1.0)
         scored = []
@@ -216,15 +249,21 @@ class ContentBasedRecommender:
             rating_quality = max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
             item_cf = collaborative[game.item_id] / collaborative_scale
             score = 0.60 * item_cf + 0.25 * similarity + 0.10 * complexity_match + 0.05 * rating_quality
+            score += 0.25 * affinity.get(game.item_id, 0.0)
             scored.append((score, game))
         # 5단계: 이미 좋아한 게임은 제외하고 점수가 높은 순서로 필요한 개수만 반환합니다.
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
-    def recommend(self, preference, limit: int = 12) -> list[RecommendationItem]:
+    def recommend(
+        self,
+        preference,
+        limit: int = 12,
+        ratings: Iterable[UserGameRating] = (),
+    ) -> list[RecommendationItem]:
         if isinstance(preference, ContextPreferenceRequest):
-            return self.recommend_context(preference, limit)
-        return self.recommend_taste(preference, limit)
+            return self.recommend_context(preference, limit, ratings)
+        return self.recommend_taste(preference, limit, ratings)
 
     @staticmethod
     def _to_item(game: BoardGame, raw_score: float, preference) -> RecommendationItem:

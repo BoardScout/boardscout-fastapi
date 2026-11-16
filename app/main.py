@@ -5,13 +5,15 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Query
+import httpx
+from fastapi import Cookie, Depends, FastAPI, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import Field
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.config import settings
+from app.core_client import SpringRatingStore
 from app.errors import ApiError, install_exception_handlers
 from app.recommender import recommender
 from app.schemas import (
@@ -37,10 +39,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         socket_timeout=2,
     )
     app.state.session_store = RedisSessionStore(redis, settings.session_ttl_seconds)
+    core_client = httpx.AsyncClient(base_url=settings.core_service_url, timeout=2.0)
+    app.state.rating_store = SpringRatingStore(core_client, settings.session_cookie_name)
     try:
         yield
     finally:
         # 2단계: 서버 재시작과 컨테이너 종료 때 연결 풀을 정리합니다.
+        await core_client.aclose()
         await redis.aclose()
 
 
@@ -136,21 +141,31 @@ PreferenceRequest = Annotated[
 )
 async def recommend_games(
     preference: PreferenceRequest,
+    request: Request,
     limit: int = Query(12, ge=1, le=50, description="반환할 추천 게임 수"),
+    session_id: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> ApiResponse[RecommendationResult]:
     """현재 상황 또는 좋아한 게임을 바탕으로 BGG 카탈로그를 추천합니다."""
 
+    ratings = []
+    if session_id is not None:
+        try:
+            ratings = await request.app.state.rating_store.get_ratings(session_id)
+        except (httpx.HTTPError, ValueError):
+            # 개인화 데이터 조회 실패가 기본 추천까지 막지는 않도록 기존 모델로 저하합니다.
+            ratings = []
     try:
         # 추천 계산은 CPU 작업이므로 이벤트 루프 밖의 작업 스레드에서 실행합니다.
-        items = await run_in_threadpool(recommender.recommend, preference, limit)
+        items = await run_in_threadpool(recommender.recommend, preference, limit, ratings)
     except ValueError as error:
         raise ApiError(422, "RECOMMEND-422-001", str(error)) from error
 
-    strategy = (
-        "content-item-hybrid"
-        if isinstance(preference, TastePreferenceRequest)
-        else "content-based"
-    )
+    if ratings:
+        strategy = "behavior-item-hybrid"
+    elif isinstance(preference, TastePreferenceRequest):
+        strategy = "content-item-hybrid"
+    else:
+        strategy = "content-based"
     return ApiResponse[RecommendationResult].ok(
         RecommendationResult(items=items, strategy=strategy)
     )

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import ContextPreferenceRequest, TastePreferenceRequest
+from app.schemas import ContextPreferenceRequest, TastePreferenceRequest, UserGameRating
 
 
 def test_context_preference_accepts_bgg_feature_contract() -> None:
@@ -50,3 +50,12 @@ def test_taste_preference_rejects_duplicate_game_ids() -> None:
         TastePreferenceRequest.model_validate(
             {"recommendationMode": "taste", "likedGameIds": [0, 0, 1]}
         )
+
+
+def test_user_rating_uses_bgg_ten_point_scale() -> None:
+    assert UserGameRating.model_validate({"datasetItemId": 7, "rating": 1}).rating == 1
+    assert UserGameRating.model_validate({"datasetItemId": 7, "rating": 10}).rating == 10
+
+    for rating in (0, 10.1):
+        with pytest.raises(ValidationError):
+            UserGameRating.model_validate({"datasetItemId": 7, "rating": rating})

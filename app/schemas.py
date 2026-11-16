@@ -82,6 +82,14 @@ class TastePreferenceRequest(ApiModel):
         return value
 
 
+class UserGameRating(ApiModel):
+    """Spring에 저장된 BGG 10점 척도의 사용자 별점입니다."""
+
+    dataset_item_id: int = Field(alias="datasetItemId", ge=0)
+    rating: float = Field(ge=1, le=10)
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
 class RecommendationItem(ApiModel):
     game_id: int = Field(alias="gameId")
     bgg_id: int = Field(alias="bggId")
