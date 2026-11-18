@@ -68,7 +68,7 @@ app = create_app()
 
 
 @app.get(
-    "/api/recommend/health",
+    "/api/v1/recommendations/health",
     response_model=ApiResponse[HealthResponse],
     tags=["health"],
     summary="서비스 생존 상태 확인",
@@ -86,7 +86,7 @@ async def health() -> ApiResponse[HealthResponse]:
 
 
 @app.get(
-    "/api/recommend/ready",
+    "/api/v1/recommendations/ready",
     response_model=ApiResponse[HealthResponse],
     tags=["health"],
     summary="서비스 준비 상태 확인",
@@ -114,7 +114,7 @@ async def ready(
 
 
 @app.get(
-    "/api/recommend/me",
+    "/api/v1/recommendations/me",
     response_model=ApiResponse[UserSessionResponse],
     tags=["session"],
     summary="공유 Redis 세션 확인",
@@ -134,7 +134,7 @@ PreferenceRequest = Annotated[
 
 
 @app.post(
-    "/api/recommend/games",
+    "/api/v1/recommendations/games",
     response_model=ApiResponse[RecommendationResult],
     tags=["recommendation"],
     summary="보드게임 추천",

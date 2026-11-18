@@ -52,7 +52,7 @@ def test_me_reads_shared_session_cookie() -> None:
     try:
         client = TestClient(app)
         client.cookies.set("BGSESSION", SESSION_ID)
-        response = client.get("/api/recommend/me")
+        response = client.get("/api/v1/recommendations/me")
     finally:
         app.dependency_overrides.clear()
 
@@ -64,7 +64,7 @@ def test_me_reads_shared_session_cookie() -> None:
 def test_me_rejects_missing_session_cookie() -> None:
     app.dependency_overrides[get_session_store] = lambda: FakeSessionStore()
     try:
-        response = TestClient(app).get("/api/recommend/me")
+        response = TestClient(app).get("/api/v1/recommendations/me")
     finally:
         app.dependency_overrides.clear()
 
@@ -75,7 +75,7 @@ def test_me_rejects_missing_session_cookie() -> None:
 def test_ready_checks_session_store() -> None:
     app.dependency_overrides[get_session_store] = lambda: FakeSessionStore(ready=True)
     try:
-        response = TestClient(app).get("/api/recommend/ready")
+        response = TestClient(app).get("/api/v1/recommendations/ready")
     finally:
         app.dependency_overrides.clear()
 

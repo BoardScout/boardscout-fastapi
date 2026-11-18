@@ -94,7 +94,7 @@ def test_user_rating_personalizes_item_ranking_and_excludes_rated_game() -> None
 
 def test_recommendation_api_accepts_frontend_contract() -> None:
     response = TestClient(app).post(
-        "/api/recommend/games?limit=5",
+        "/api/v1/recommendations/games?limit=5",
         json={
             "recommendationMode": "context",
             "playerCount": 4,
@@ -113,7 +113,7 @@ def test_recommendation_api_accepts_frontend_contract() -> None:
 
 def test_taste_api_reports_hybrid_strategy() -> None:
     response = TestClient(app).post(
-        "/api/recommend/games?limit=5",
+        "/api/v1/recommendations/games?limit=5",
         json={"recommendationMode": "taste", "likedGameIds": [0, 1, 2]},
     )
 
@@ -131,7 +131,7 @@ def test_taste_api_reports_behavior_strategy_when_ratings_are_available() -> Non
         app.state.rating_store = FakeRatingStore()
         client.cookies.set("BGSESSION", "a" * 43)
         response = client.post(
-            "/api/recommend/games?limit=5",
+            "/api/v1/recommendations/games?limit=5",
             json={"recommendationMode": "taste", "likedGameIds": [0, 1, 2]},
         )
 
@@ -141,7 +141,7 @@ def test_taste_api_reports_behavior_strategy_when_ratings_are_available() -> Non
 
 def test_recommendation_api_returns_common_validation_error() -> None:
     response = TestClient(app).post(
-        "/api/recommend/games",
+        "/api/v1/recommendations/games",
         json={
             "recommendationMode": "context",
             "playerCount": 0,

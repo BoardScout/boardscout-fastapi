@@ -7,7 +7,7 @@ client = TestClient(app)
 
 
 def test_health() -> None:
-    response = client.get("/api/recommend/health")
+    response = client.get("/api/v1/recommendations/health")
 
     assert response.status_code == 200
     payload = response.json()
