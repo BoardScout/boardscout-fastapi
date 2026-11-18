@@ -17,6 +17,8 @@ class ApiError(Exception):
     """예상 가능한 API 오류를 HTTP 상태와 서비스 코드로 표현합니다."""
 
     def __init__(self, status_code: int, code: str, message: str) -> None:
+        """HTTP 상태 코드, 서비스 오류 코드, 사용자에게 보여줄 메시지를 보관합니다."""
+
         self.status_code = status_code
         self.code = code
         self.message = message
@@ -35,6 +37,8 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ApiError)
     async def handle_api_error(_request: Request, error: ApiError) -> JSONResponse:
+        """ApiError를 공통 실패 응답 JSON으로 변환합니다."""
+
         payload = ApiResponse[ErrorDetail](
             success=False,
             code=error.code,
@@ -50,6 +54,8 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def handle_validation_error(
         _request: Request, error: RequestValidationError
     ) -> JSONResponse:
+        """요청 값 검증 실패를 필드별 메시지가 담긴 422 응답으로 변환합니다."""
+
         # 같은 필드에 오류가 여러 개여도 가장 먼저 발견한 원인만 전달합니다.
         errors: dict[str, str] = {}
         for item in error.errors():
@@ -64,6 +70,8 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHttpException)
     async def handle_http_error(_request: Request, error: StarletteHttpException) -> JSONResponse:
+        """Starlette HTTP 예외를 상태 코드에 맞는 공통 오류 응답으로 변환합니다."""
+
         # 존재하지 않는 경로와 허용되지 않은 HTTP 메서드도 공통 계약으로 맞춥니다.
         payload = ApiResponse[ErrorDetail](
             success=False,
@@ -78,6 +86,8 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, error: Exception) -> JSONResponse:
+        """처리되지 않은 예외를 로그로 남기고 500 응답으로 변환합니다."""
+
         # 상세 예외는 서버 로그에만 남기고 응답에는 내부 정보를 노출하지 않습니다.
         logger.exception(
             "처리되지 않은 오류: %s %s",

@@ -1,4 +1,4 @@
-"""BoardGameGeek 메타데이터와 평점을 결합한 추천 모델."""
+"""BoardGameGeek 메타데이터와 평점을 결합한 추천 모델입니다."""
 
 from __future__ import annotations
 
@@ -43,9 +43,9 @@ STYLE_KEYWORDS: dict[PlayStyle, tuple[str, ...]] = {
 
 DIFFICULTY_CENTERS = {1: 1.5, 2: 2.5, 3: 3.7}
 
-# 별점이 3개 미만이면 취향을 알 수 없어서 인기 게임을 보여준다.
+# 별점이 3개 미만이면 취향을 알 수 없어서 인기 게임을 보여줍니다.
 MIN_TASTE_RATINGS = 3
-# 별점 n개일 때 개인화 비중은 n / (n + 5). 5개면 절반, 20개면 80%.
+# 별점 n개일 때 개인화 비중은 n / (n + 5). 5개면 절반, 20개면 80%입니다.
 CONFIDENCE_K = 5
 
 
@@ -68,13 +68,15 @@ class BoardGame:
 
     @property
     def tokens(self) -> tuple[str, ...]:
+        """분류와 메커니즘을 'category:', 'mechanic:' 접두어가 붙은 소문자 토큰으로 반환합니다."""
+
         return tuple(f"category:{value.lower()}" for value in self.categories) + tuple(
             f"mechanic:{value.lower()}" for value in self.mechanics
         )
 
 
 def _parse_list(raw: str) -> tuple[str, ...]:
-    """CSV에 문자열로 저장된 목록을 안전하게 변환한다."""
+    """CSV에 문자열로 저장된 목록을 안전하게 변환합니다."""
 
     value = ast.literal_eval(raw) if raw else []
     if not isinstance(value, list):
@@ -83,14 +85,14 @@ def _parse_list(raw: str) -> tuple[str, ...]:
 
 
 def _map_labels(values: Iterable[str], mapping):
-    """BGG 영문 분류를 화면에서 사용하는 테마와 플레이 방식으로 묶는다."""
+    """BGG 영문 분류를 화면에서 사용하는 테마와 플레이 방식으로 묶습니다."""
 
     normalized = " | ".join(values).lower()
     return tuple(label for label, keywords in mapping.items() if any(word in normalized for word in keywords))
 
 
 def load_games(path: Path) -> list[BoardGame]:
-    """ML_RecSys에서 생성한 게임 카탈로그 CSV를 읽는다."""
+    """ML_RecSys에서 생성한 게임 카탈로그 CSV를 읽습니다."""
 
     games: list[BoardGame] = []
     with path.open("r", encoding="utf-8", newline="") as source:
@@ -121,9 +123,11 @@ def load_games(path: Path) -> list[BoardGame]:
 
 
 class ContentBasedRecommender:
-    """카탈로그 콘텐츠와 미리 학습한 게임 이웃을 결합한 추천기."""
+    """카탈로그 콘텐츠와 미리 학습한 게임 이웃을 결합한 추천기입니다."""
 
     def __init__(self, games: list[BoardGame], neighbors_path: Path | None = None) -> None:
+        """게임 목록으로 TF-IDF 특징 벡터를 만들고, 오프라인에서 계산한 이웃 점수를 불러옵니다."""
+
         self.games = games
         self.by_id = {game.item_id: game for game in games}
         self.vectors = self._fit_tfidf(games)
@@ -131,7 +135,7 @@ class ContentBasedRecommender:
 
     @staticmethod
     def _load_neighbors(path: Path | None) -> dict[int, dict[int, float]]:
-        """오프라인 학습으로 만든 게임별 이웃 점수를 읽는다."""
+        """오프라인 학습으로 만든 게임별 이웃 점수를 읽습니다."""
 
         if path is None or not path.exists():
             return {}
@@ -143,7 +147,7 @@ class ContentBasedRecommender:
 
     @staticmethod
     def _fit_tfidf(games: list[BoardGame]) -> dict[int, dict[str, float]]:
-        """자주 등장하는 분류의 영향은 낮추고 희소한 특징의 영향은 높인다."""
+        """자주 등장하는 분류의 영향은 낮추고 희소한 특징의 영향은 높입니다."""
 
         document_frequency = Counter(token for game in games for token in set(game.tokens))
         vectors: dict[int, dict[str, float]] = {}
@@ -159,7 +163,7 @@ class ContentBasedRecommender:
 
     @staticmethod
     def _cosine(left: dict[str, float], right: dict[str, float]) -> float:
-        """두 게임 특징 벡터의 방향 유사도를 계산한다."""
+        """두 게임 특징 벡터의 방향 유사도를 계산합니다."""
 
         if len(left) > len(right):
             left, right = right, left
@@ -168,14 +172,14 @@ class ContentBasedRecommender:
     def _rating_affinity(
         self, ratings: Iterable[UserGameRating]
     ) -> tuple[set[int], dict[int, float]]:
-        """이미 평가한 게임 ID와 별점으로 계산한 이웃 게임별 보정 점수를 반환한다."""
+        """이미 평가한 게임 ID와 별점으로 계산한 이웃 게임별 보정 점수를 반환합니다."""
 
         known = [rating for rating in ratings if rating.dataset_item_id in self.by_id]
         excluded = {rating.dataset_item_id for rating in known}
         weighted = Counter()
         total_weight = 0.0
         for rating in known:
-            # 1~10점의 중간값인 5.5점을 기준으로 -1~1 범위의 신호를 만든다.
+            # 1~10점의 중간값인 5.5점을 기준으로 -1~1 범위의 신호를 만듭니다.
             signal = (rating.rating - 5.5) / 4.5
             if math.isclose(signal, 0.0):
                 continue
@@ -184,7 +188,7 @@ class ContentBasedRecommender:
                 weighted[candidate_id] += similarity * signal
         if total_weight == 0:
             return excluded, {}
-        # 별점이 많을수록 보정 점수의 범위가 커지지 않도록 전체 신호의 절댓값 합으로 나눈다.
+        # 별점이 많을수록 보정 점수의 범위가 커지지 않도록 전체 신호의 절댓값 합으로 나눕니다.
         return excluded, {
             candidate_id: score / total_weight for candidate_id, score in weighted.items()
         }
@@ -195,6 +199,12 @@ class ContentBasedRecommender:
         limit: int = 12,
         ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
+        """상황 추천입니다.
+
+        인원과 시간 조건을 통과한 게임을 난이도, 테마, 플레이 방식, 평점으로 점수화해
+        상위 limit개를 반환합니다. 별점이 있으면 이웃 게임 점수를 더해 보정합니다.
+        """
+
         # 1단계: 화면의 3단계 난이도를 BGG complexity 점수의 중심값으로 바꿉니다.
         target_complexity = DIFFICULTY_CENTERS[preference.difficulty]
         # 2단계: 인원과 시간은 점수가 아니라 실제 플레이 가능 여부로 먼저 거릅니다.
@@ -223,7 +233,7 @@ class ContentBasedRecommender:
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
     def known_rating_count(self, ratings: Iterable[UserGameRating]) -> int:
-        """카탈로그에 있는 게임에 남긴 별점 개수."""
+        """카탈로그에 있는 게임에 남긴 별점 개수를 반환합니다."""
 
         return len({rating.dataset_item_id for rating in ratings if rating.dataset_item_id in self.by_id})
 
@@ -232,7 +242,7 @@ class ContentBasedRecommender:
         limit: int = 12,
         ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
-        """베이지안 평점이 높은 순서. 이미 평가한 게임은 뺀다."""
+        """베이지안 평점이 높은 순서로 추천합니다. 이미 평가한 게임은 뺍니다."""
 
         rated_ids = {rating.dataset_item_id for rating in ratings}
         ranked = sorted(
@@ -251,6 +261,8 @@ class ContentBasedRecommender:
 
     @staticmethod
     def _rating_quality(game: BoardGame) -> float:
+        """BGG 베이지안 평점(5.5~9점)을 0~1 범위 점수로 정규화합니다."""
+
         return max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
 
     def recommend_taste(
@@ -259,12 +271,18 @@ class ContentBasedRecommender:
         limit: int = 12,
         ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
-        # 같은 게임의 별점이 여러 개면 마지막 값만 쓰고, 카탈로그에 없는 게임은 뺀다.
+        """취향 추천입니다.
+
+        별점이 3개 미만이면 인기 게임을 반환하고, 그 이상이면 별점으로 만든 취향 프로필과
+        이웃 게임 점수로 점수화합니다. 이미 평가한 게임은 제외합니다.
+        """
+
+        # 같은 게임의 별점이 여러 개면 마지막 값만 쓰고, 카탈로그에 없는 게임은 뺍니다.
         rated = {r.dataset_item_id: r for r in ratings if r.dataset_item_id in self.by_id}
         if len(rated) < MIN_TASTE_RATINGS:
             return self.recommend_popular(limit, rated.values())
 
-        # 별점을 -1~1로 바꾼다. 5.5점보다 낮으면 음수라서 비슷한 게임이 아래로 내려간다.
+        # 별점을 -1~1로 바꿉니다. 5.5점보다 낮으면 음수라서 비슷한 게임이 아래로 내려갑니다.
         profile: Counter[str] = Counter()
         item_cf: Counter[int] = Counter()
         for rating in rated.values():
@@ -277,7 +295,7 @@ class ContentBasedRecommender:
         profile = {token: value / norm for token, value in profile.items()}
         cf_scale = max((abs(v) for v in item_cf.values()), default=0.0) or 1.0
 
-        # 별점이 쌓일수록 내 취향 점수를 더 믿고, 적을 땐 인기 점수가 받쳐준다.
+        # 별점이 쌓일수록 내 취향 점수를 더 믿고, 적을 땐 인기 점수가 받쳐 줍니다.
         confidence = len(rated) / (len(rated) + CONFIDENCE_K)
         scored = []
         for game in self.games:
@@ -296,6 +314,8 @@ class ContentBasedRecommender:
         limit: int = 12,
         ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
+        """선호 조건의 종류에 따라 상황 추천과 취향 추천 중 알맞은 쪽으로 넘깁니다."""
+
         if isinstance(preference, ContextPreferenceRequest):
             return self.recommend_context(preference, limit, ratings)
         return self.recommend_taste(preference, limit, ratings)
@@ -304,7 +324,7 @@ class ContentBasedRecommender:
     def _to_item(
         game: BoardGame, raw_score: float, preference, reason: str | None = None
     ) -> RecommendationItem:
-        """내부 게임 정보를 프런트가 사용하는 응답 형식으로 변환한다."""
+        """내부 게임 정보를 프런트가 사용하는 응답 형식으로 변환합니다."""
 
         matched_themes = set(getattr(preference, "themes", [])) & set(game.themes)
         matched_styles = set(getattr(preference, "play_styles", [])) & set(game.play_styles)

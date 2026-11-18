@@ -152,10 +152,10 @@ async def recommend_games(
         try:
             ratings = await request.app.state.rating_store.get_ratings(session_id)
         except (httpx.HTTPError, ValueError):
-            # Spring에서 별점을 읽지 못하면 이번 요청은 별점 없이 추천한다.
+            # Spring에서 별점을 읽지 못하면 이번 요청은 별점 없이 추천합니다.
             ratings = []
     try:
-        # CPU를 쓰는 추천 계산은 작업 스레드에 넘겨 다른 요청을 계속 받는다.
+        # CPU를 쓰는 추천 계산은 작업 스레드에 넘겨 다른 요청을 계속 받습니다.
         items = await run_in_threadpool(recommender.recommend, preference, limit, ratings)
     except ValueError as error:
         raise ApiError(422, "RECOMMEND-422-001", str(error)) from error

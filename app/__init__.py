@@ -1,2 +1,2 @@
-"""Boardgame recommendation API package."""
+"""보드게임 추천 API 패키지입니다."""
 

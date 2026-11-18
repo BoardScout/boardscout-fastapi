@@ -12,17 +12,22 @@ from app.session import SESSION_ID_PATTERN
 
 
 class RatingStore(Protocol):
-    async def get_ratings(self, session_id: str) -> list[UserGameRating]: ...
+    async def get_ratings(self, session_id: str) -> list[UserGameRating]:
+        """sessionId에 해당하는 사용자의 별점 목록을 가져옵니다."""
 
 
 class SpringRatingStore:
     """브라우저의 로그인 쿠키를 Spring에 전달해 내 별점을 조회합니다."""
 
     def __init__(self, client: httpx.AsyncClient, cookie_name: str) -> None:
+        """Spring 호출에 사용할 HTTP 클라이언트와 세션 쿠키 이름을 보관합니다."""
+
         self.client = client
         self.cookie_name = cookie_name
 
     async def get_ratings(self, session_id: str) -> list[UserGameRating]:
+        """Spring의 내 별점 API를 호출해 별점 목록을 반환합니다. sessionId 형식이 올바르지 않으면 호출하지 않고 빈 목록을 반환합니다."""
+
         if not SESSION_ID_PATTERN.fullmatch(session_id):
             return []
         response = await self.client.get(

@@ -30,6 +30,8 @@ class ApiResponse(ApiModel, Generic[ResponseData]):
         result: ResponseData,
         message: str = "요청에 성공했습니다.",
     ) -> "ApiResponse[ResponseData]":
+        """성공 응답을 만듭니다. 응답 코드는 COMMON-200으로 고정합니다."""
+
         return cls(success=True, code="COMMON-200", message=message, result=result)
 
 
@@ -98,7 +100,7 @@ class RecommendationItem(ApiModel):
 class RecommendationResult(ApiModel):
     items: list[RecommendationItem]
     strategy: str = "content-based"
-    # 취향 추천이 사용자의 별점으로 개인화되었는지, 아니라면 안내에 쓸 별점 개수 정보.
+    # 취향 추천이 사용자의 별점으로 개인화됐는지와, 아닐 때 안내에 쓸 별점 개수 정보입니다.
     personalized: bool = False
     rating_count: int = Field(0, alias="ratingCount", ge=0)
     min_ratings_required: int = Field(3, alias="minRatingsRequired", ge=1)

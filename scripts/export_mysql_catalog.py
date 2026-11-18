@@ -150,6 +150,8 @@ THEME_RULES = (
 
 
 def sql_string(value: str | None) -> str:
+    """문자열을 SQL 리터럴로 바꿉니다. 비어 있으면 NULL, 작은따옴표와 역슬래시는 이스케이프합니다."""
+
     if value is None or not value.strip():
         return "NULL"
     escaped = value.replace("\\", "\\\\").replace("'", "''")
@@ -157,12 +159,16 @@ def sql_string(value: str | None) -> str:
 
 
 def sql_number(value: str | None, *, integer: bool = False) -> str:
+    """숫자 문자열을 SQL 숫자 리터럴로 바꿉니다. 비어 있으면 NULL이며 integer이면 정수로 변환합니다."""
+
     if value is None or not value.strip():
         return "NULL"
     return str(int(float(value))) if integer else str(float(value))
 
 
 def parse_labels(raw: str) -> list[str]:
+    """CSV에 문자열로 저장된 분류·메커니즘 목록을 리스트로 바꾸고 빈 값은 제외합니다."""
+
     labels = ast.literal_eval(raw) if raw else []
     if not isinstance(labels, list):
         raise ValueError("categories and mechanics must be lists")
@@ -181,6 +187,8 @@ def choose_placeholder(categories: list[str], mechanics: list[str]) -> str:
 
 
 def translated_labels(labels: list[str], translations: dict[str, str], limit: int = 2) -> str:
+    """번역이 있는 분류만 골라 limit개까지 '·'로 이어 붙입니다."""
+
     # 번역이 준비된 용어만 사용해 한국어 설명 안에 영문 분류명이 섞이지 않게 합니다.
     translated = [translations[label] for label in labels if label in translations]
     return "·".join(translated[:limit])
@@ -285,6 +293,8 @@ def write_catalog_sql(source: Path, output: TextIO) -> int:
 
 
 def export(source: Path, destination: Path | None = None) -> int:
+    """CSV 카탈로그를 SQL로 내보냅니다. destination이 없으면 표준 출력에 쓰고, 내보낸 게임 수를 반환합니다."""
+
     context = destination.open("w", encoding="utf-8", newline="\n") if destination else nullcontext(sys.stdout)
     with context as output:
         return write_catalog_sql(source, output)

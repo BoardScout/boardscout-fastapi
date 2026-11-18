@@ -1,4 +1,4 @@
-"""평점 CSV에서 게임별 adjusted-cosine 이웃을 한 번 계산한다."""
+"""평점 CSV에서 게임별 adjusted-cosine 이웃을 한 번 계산합니다."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ def build_neighbors(
     items: int = 1_500,
     keep: int = 40,
 ) -> None:
-    # 평점이 없는 조합을 0점으로 채우지 않도록 희소 행렬로 보관한다.
+    """평점 CSV로 게임 간 adjusted-cosine 유사도를 계산하고, 게임별 상위 keep개 이웃을 JSON으로 저장합니다."""
+
+    # 평점이 없는 조합을 0점으로 채우지 않도록 희소 행렬로 보관합니다.
     rows = np.loadtxt(train_path, delimiter=",", skiprows=1, dtype=np.float32)
     ratings = sparse.csr_matrix(
         (rows[:, 2], (rows[:, 0].astype(int), rows[:, 1].astype(int))),
@@ -31,7 +33,7 @@ def build_neighbors(
         where=counts > 0,
     )
     centered = ratings.astype(np.float32, copy=True)
-    # 사용자의 후한 평가와 박한 평가 차이를 제거한 뒤 게임끼리 비교한다.
+    # 사용자의 후한 평가와 박한 평가 차이를 제거한 뒤 게임끼리 비교합니다.
     centered.data -= np.repeat(means, np.diff(centered.indptr))
 
     gram = (centered.T @ centered).toarray()
@@ -45,14 +47,14 @@ def build_neighbors(
     binary = ratings.copy()
     binary.data[:] = 1
     overlap = (binary.T @ binary).toarray()
-    # 함께 평가한 사용자가 적은 게임 쌍은 우연한 유사도가 커지지 않도록 낮춘다.
+    # 함께 평가한 사용자가 적은 게임 쌍은 우연한 유사도가 커지지 않도록 낮춥니다.
     similarity *= overlap / (overlap + 250)
     similarity[overlap < 10] = 0
     similarity[similarity < 0] = 0
     np.fill_diagonal(similarity, 0)
 
     neighbors = {}
-    # API에는 전체 유사도 행렬 대신 게임별 상위 이웃만 전달한다.
+    # API에는 전체 유사도 행렬 대신 게임별 상위 이웃만 전달합니다.
     for item_id, scores in enumerate(similarity):
         candidates = np.flatnonzero(scores)
         selected = candidates[np.argsort(scores[candidates])[-keep:]][::-1]
