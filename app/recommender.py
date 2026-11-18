@@ -43,6 +43,11 @@ STYLE_KEYWORDS: dict[PlayStyle, tuple[str, ...]] = {
 
 DIFFICULTY_CENTERS = {1: 1.5, 2: 2.5, 3: 3.7}
 
+# 별점이 3개 미만이면 취향을 알 수 없어서 인기 게임을 보여준다.
+MIN_TASTE_RATINGS = 3
+# 별점 n개일 때 개인화 비중은 n / (n + 5). 5개면 절반, 20개면 80%.
+CONFIDENCE_K = 5
+
 
 @dataclass(frozen=True)
 class BoardGame:
@@ -217,43 +222,71 @@ class ContentBasedRecommender:
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
+    def known_rating_count(self, ratings: Iterable[UserGameRating]) -> int:
+        """카탈로그에 있는 게임에 남긴 별점 개수."""
+
+        return len({rating.dataset_item_id for rating in ratings if rating.dataset_item_id in self.by_id})
+
+    def recommend_popular(
+        self,
+        limit: int = 12,
+        ratings: Iterable[UserGameRating] = (),
+    ) -> list[RecommendationItem]:
+        """베이지안 평점이 높은 순서. 이미 평가한 게임은 뺀다."""
+
+        rated_ids = {rating.dataset_item_id for rating in ratings}
+        ranked = sorted(
+            (game for game in self.games if game.item_id not in rated_ids),
+            key=lambda game: (-game.bayes_rating, game.item_id),
+        )
+        return [
+            self._to_item(
+                game,
+                self._rating_quality(game),
+                None,
+                reason="BGG 베이지안 평점이 높은 인기 게임",
+            )
+            for game in ranked[:limit]
+        ]
+
+    @staticmethod
+    def _rating_quality(game: BoardGame) -> float:
+        return max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
+
     def recommend_taste(
         self,
         preference: TastePreferenceRequest,
         limit: int = 12,
         ratings: Iterable[UserGameRating] = (),
     ) -> list[RecommendationItem]:
-        # 1단계: 요청 ID 중 실제 카탈로그에 있는 게임만 취향 학습 입력으로 사용합니다.
-        liked = [self.by_id[item_id] for item_id in preference.liked_game_ids if item_id in self.by_id]
-        if len(liked) < 3:
-            raise ValueError("likedGameIds에는 카탈로그에 존재하는 게임이 3개 이상 필요합니다")
-        # 2단계: 좋아한 게임 벡터를 합치고 길이를 1로 맞춰 사용자 취향 벡터를 만듭니다.
+        # 같은 게임의 별점이 여러 개면 마지막 값만 쓰고, 카탈로그에 없는 게임은 뺀다.
+        rated = {r.dataset_item_id: r for r in ratings if r.dataset_item_id in self.by_id}
+        if len(rated) < MIN_TASTE_RATINGS:
+            return self.recommend_popular(limit, rated.values())
+
+        # 별점을 -1~1로 바꾼다. 5.5점보다 낮으면 음수라서 비슷한 게임이 아래로 내려간다.
         profile: Counter[str] = Counter()
-        for game in liked:
-            profile.update(self.vectors[game.item_id])
-        profile_norm = math.sqrt(sum(value * value for value in profile.values())) or 1.0
-        normalized_profile = {token: value / profile_norm for token, value in profile.items()}
-        average_complexity = sum(game.complexity for game in liked) / len(liked)
-        rated_ids, affinity = self._rating_affinity(ratings)
-        excluded = set(preference.liked_game_ids) | rated_ids
-        collaborative = Counter()
-        # 3단계: 선택한 게임들의 이웃 점수를 합쳐 공통으로 가까운 후보를 찾습니다.
-        for item_id in preference.liked_game_ids:
-            collaborative.update(self.neighbors.get(item_id, {}))
-        collaborative_scale = max(collaborative.values(), default=1.0)
+        item_cf: Counter[int] = Counter()
+        for rating in rated.values():
+            signal = (rating.rating - 5.5) / 4.5
+            for token, value in self.vectors[rating.dataset_item_id].items():
+                profile[token] += signal * value
+            for other_id, similarity in self.neighbors.get(rating.dataset_item_id, {}).items():
+                item_cf[other_id] += signal * similarity
+        norm = math.sqrt(sum(v * v for v in profile.values())) or 1.0
+        profile = {token: value / norm for token, value in profile.items()}
+        cf_scale = max((abs(v) for v in item_cf.values()), default=0.0) or 1.0
+
+        # 별점이 쌓일수록 내 취향 점수를 더 믿고, 적을 땐 인기 점수가 받쳐준다.
+        confidence = len(rated) / (len(rated) + CONFIDENCE_K)
         scored = []
         for game in self.games:
-            if game.item_id in excluded:
+            if game.item_id in rated:
                 continue
-            # 4단계: 아이템 이웃 점수를 중심으로 콘텐츠·난이도·평점 신호를 보완합니다.
-            similarity = self._cosine(normalized_profile, self.vectors[game.item_id])
-            complexity_match = max(0.0, 1.0 - abs(game.complexity - average_complexity) / 3.0)
-            rating_quality = max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
-            item_cf = collaborative[game.item_id] / collaborative_scale
-            score = 0.60 * item_cf + 0.25 * similarity + 0.10 * complexity_match + 0.05 * rating_quality
-            score += 0.25 * affinity.get(game.item_id, 0.0)
+            content = self._cosine(profile, self.vectors[game.item_id])
+            taste = 0.7 * item_cf[game.item_id] / cf_scale + 0.3 * content
+            score = confidence * taste + (1 - confidence) * self._rating_quality(game)
             scored.append((score, game))
-        # 5단계: 이미 좋아한 게임은 제외하고 점수가 높은 순서로 필요한 개수만 반환합니다.
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
 
@@ -268,17 +301,21 @@ class ContentBasedRecommender:
         return self.recommend_taste(preference, limit, ratings)
 
     @staticmethod
-    def _to_item(game: BoardGame, raw_score: float, preference) -> RecommendationItem:
+    def _to_item(
+        game: BoardGame, raw_score: float, preference, reason: str | None = None
+    ) -> RecommendationItem:
         """내부 게임 정보를 프런트가 사용하는 응답 형식으로 변환한다."""
 
         matched_themes = set(getattr(preference, "themes", [])) & set(game.themes)
         matched_styles = set(getattr(preference, "play_styles", [])) & set(game.play_styles)
-        if matched_themes:
+        if reason is not None:
+            pass
+        elif matched_themes:
             reason = f"선호 테마와 {len(matched_themes)}개 일치하고 인원·시간 조건에 맞는 게임"
         elif matched_styles:
             reason = f"원하는 플레이 방식과 {len(matched_styles)}개 일치하는 게임"
         else:
-            reason = f"{game.categories[0] if game.categories else '보드게임'} 특성이 취향 프로필과 유사한 게임"
+            reason = f"{game.categories[0] if game.categories else '보드게임'} 특성이 내 별점 취향과 유사한 게임"
         return RecommendationItem(
             gameId=game.item_id,
             bggId=game.bgg_id,

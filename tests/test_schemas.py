@@ -33,22 +33,16 @@ def test_context_preference_rejects_unknown_dataset_mapping() -> None:
         )
 
 
-def test_taste_preference_requires_three_known_game_ids() -> None:
-    preference = TastePreferenceRequest.model_validate(
-        {"recommendationMode": "taste", "likedGameIds": [0, 1, 2]}
-    )
-    assert preference.liked_game_ids == [0, 1, 2]
+def test_taste_preference_needs_only_the_mode() -> None:
+    preference = TastePreferenceRequest.model_validate({"recommendationMode": "taste"})
+    assert preference.recommendation_mode == "taste"
 
+
+def test_taste_preference_rejects_liked_game_ids() -> None:
+    # 취향 추천은 별점으로만 계산하므로 게임 ID 목록은 받지 않는다.
     with pytest.raises(ValidationError):
         TastePreferenceRequest.model_validate(
-            {"recommendationMode": "taste", "likedGameIds": [0, 1]}
-        )
-
-
-def test_taste_preference_rejects_duplicate_game_ids() -> None:
-    with pytest.raises(ValidationError):
-        TastePreferenceRequest.model_validate(
-            {"recommendationMode": "taste", "likedGameIds": [0, 0, 1]}
+            {"recommendationMode": "taste", "likedGameIds": [0, 1, 2]}
         )
 
 

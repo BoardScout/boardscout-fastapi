@@ -38,22 +38,12 @@ def test_context_recommendations_respect_hard_player_and_time_filters(model) -> 
     assert all(item.max_play_time <= 30 for item in recommendations)
 
 
-def test_taste_recommendations_exclude_liked_games_and_are_deterministic(model) -> None:
-    preference = TastePreferenceRequest.model_validate(
-        {"recommendationMode": "taste", "likedGameIds": [0, 1, 2]}
-    )
-
-    first = model.recommend(preference, limit=10)
-    second = model.recommend(preference, limit=10)
-
-    assert [item.game_id for item in first] == [item.game_id for item in second]
-    assert not ({item.game_id for item in first} & {0, 1, 2})
-    assert all(0 <= item.score <= 100 for item in first)
-    assert model.neighbors
+TASTE = TastePreferenceRequest.model_validate({"recommendationMode": "taste"})
 
 
-def test_user_rating_personalizes_item_ranking_and_excludes_rated_game() -> None:
-    games = [
+def make_games(count: int, bayes: dict[int, float] | None = None) -> list[BoardGame]:
+    bayes = bayes or {}
+    return [
         BoardGame(
             item_id=item_id,
             bgg_id=1000 + item_id,
@@ -62,7 +52,7 @@ def test_user_rating_personalizes_item_ranking_and_excludes_rated_game() -> None
             max_players=4,
             max_playtime=60,
             average_rating=7.0,
-            bayes_rating=7.0,
+            bayes_rating=bayes.get(item_id, 7.0),
             complexity=2.5,
             users_rated=100,
             categories=("Strategy",),
@@ -70,25 +60,79 @@ def test_user_rating_personalizes_item_ranking_and_excludes_rated_game() -> None
             themes=(),
             play_styles=(),
         )
-        for item_id in range(6)
+        for item_id in range(count)
     ]
-    personalized = ContentBasedRecommender(games)
-    personalized.neighbors = {0: {4: 0.9}}
-    preference = TastePreferenceRequest.model_validate(
-        {"recommendationMode": "taste", "likedGameIds": [1, 2, 3]}
+
+
+def ratings_of(*pairs: tuple[int, float]) -> list[UserGameRating]:
+    return [UserGameRating(datasetItemId=item_id, rating=value) for item_id, value in pairs]
+
+
+def test_taste_uses_popular_games_when_ratings_are_missing(model) -> None:
+    result = model.recommend(TASTE, limit=20)
+
+    bayes = [model.by_id[item.game_id].bayes_rating for item in result]
+    assert len(result) == 20
+    assert bayes == sorted(bayes, reverse=True)
+
+
+def test_taste_uses_popular_games_below_three_ratings(model) -> None:
+    ratings = ratings_of((0, 9), (1, 9))
+
+    result = model.recommend(TASTE, limit=20, ratings=ratings)
+
+    assert not ({item.game_id for item in result} & {0, 1})
+    assert model.known_rating_count(ratings) == 2
+
+
+def test_taste_excludes_rated_games_and_is_deterministic(model) -> None:
+    ratings = ratings_of((0, 9), (1, 8), (2, 7), (3, 3))
+
+    first = model.recommend(TASTE, limit=20, ratings=ratings)
+    second = model.recommend(TASTE, limit=20, ratings=ratings)
+
+    assert len(first) == 20
+    assert [item.game_id for item in first] == [item.game_id for item in second]
+    assert not ({item.game_id for item in first} & {0, 1, 2, 3})
+    assert all(0 <= item.score <= 100 for item in first)
+
+
+def test_high_and_low_ratings_move_neighbors_in_opposite_directions() -> None:
+    local = ContentBasedRecommender(make_games(8))
+    local.neighbors = {0: {4: 0.9}}
+    others = [(1, 5.5), (2, 5.5)]
+
+    liked = local.recommend(TASTE, ratings=ratings_of((0, 10), *others))
+    disliked = local.recommend(TASTE, ratings=ratings_of((0, 1), *others))
+
+    assert liked[0].game_id == 4
+    assert disliked[-1].game_id == 4
+
+
+def test_more_ratings_make_the_neighbor_signal_stronger() -> None:
+    local = ContentBasedRecommender(make_games(30, bayes={4: 5.5}))
+    local.neighbors = {0: {4: 0.9}}
+    few = ratings_of((0, 10), (1, 5.5), (2, 5.5))
+    many = few + ratings_of(*[(i, 5.5) for i in range(5, 25)])
+
+    score_few = next(i.score for i in local.recommend(TASTE, limit=30, ratings=few) if i.game_id == 4)
+    score_many = next(i.score for i in local.recommend(TASTE, limit=30, ratings=many) if i.game_id == 4)
+
+    assert score_many > score_few
+
+
+def test_context_rating_adjusts_ranking_and_excludes_rated_game() -> None:
+    local = ContentBasedRecommender(make_games(6))
+    local.neighbors = {0: {4: 0.9}}
+    preference = ContextPreferenceRequest.model_validate(
+        {"recommendationMode": "context", "playerCount": 2, "maxPlayTime": 60, "difficulty": 2}
     )
 
-    positive = personalized.recommend(
-        preference,
-        ratings=[UserGameRating(datasetItemId=0, rating=10)],
-    )
-    negative = personalized.recommend(
-        preference,
-        ratings=[UserGameRating(datasetItemId=0, rating=1)],
-    )
+    positive = local.recommend(preference, ratings=ratings_of((0, 10)))
+    negative = local.recommend(preference, ratings=ratings_of((0, 1)))
 
     assert positive[0].game_id == 4
-    assert negative[0].game_id == 5
+    assert negative[0].game_id != 4
     assert all(item.game_id != 0 for item in positive + negative)
 
 
@@ -111,32 +155,39 @@ def test_recommendation_api_accepts_frontend_contract() -> None:
     assert len(payload["items"]) == 5
 
 
-def test_taste_api_reports_hybrid_strategy() -> None:
+def test_taste_api_returns_popular_games_without_login() -> None:
     response = TestClient(app).post(
-        "/api/v1/recommendations/games?limit=5",
-        json={"recommendationMode": "taste", "likedGameIds": [0, 1, 2]},
+        "/api/v1/recommendations/games?limit=20", json={"recommendationMode": "taste"}
     )
 
     assert response.status_code == 200
-    assert response.json()["result"]["strategy"] == "content-item-hybrid"
+    result = response.json()["result"]
+    assert result["strategy"] == "popularity"
+    assert result["personalized"] is False
+    assert result["ratingCount"] == 0
+    assert result["minRatingsRequired"] == 3
+    assert len(result["items"]) == 20
 
 
-def test_taste_api_reports_behavior_strategy_when_ratings_are_available() -> None:
+def test_taste_api_personalizes_with_three_or_more_ratings() -> None:
     class FakeRatingStore:
         async def get_ratings(self, session_id: str):
             assert session_id == "a" * 43
-            return [UserGameRating(datasetItemId=3, rating=9)]
+            return ratings_of((3, 9), (5, 8), (7, 2))
 
     with TestClient(app) as client:
         app.state.rating_store = FakeRatingStore()
         client.cookies.set("BGSESSION", "a" * 43)
         response = client.post(
-            "/api/v1/recommendations/games?limit=5",
-            json={"recommendationMode": "taste", "likedGameIds": [0, 1, 2]},
+            "/api/v1/recommendations/games?limit=20", json={"recommendationMode": "taste"}
         )
 
+    result = response.json()["result"]
     assert response.status_code == 200
-    assert response.json()["result"]["strategy"] == "behavior-item-hybrid"
+    assert result["strategy"] == "rating-profile-hybrid"
+    assert result["personalized"] is True
+    assert result["ratingCount"] == 3
+    assert not ({item["gameId"] for item in result["items"]} & {3, 5, 7})
 
 
 def test_recommendation_api_returns_common_validation_error() -> None:

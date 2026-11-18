@@ -15,7 +15,7 @@ from redis.exceptions import RedisError
 from app.config import settings
 from app.core_client import SpringRatingStore
 from app.errors import ApiError, install_exception_handlers
-from app.recommender import recommender
+from app.recommender import MIN_TASTE_RATINGS, recommender
 from app.schemas import (
     ApiResponse,
     ContextPreferenceRequest,
@@ -142,10 +142,10 @@ PreferenceRequest = Annotated[
 async def recommend_games(
     preference: PreferenceRequest,
     request: Request,
-    limit: int = Query(12, ge=1, le=50, description="반환할 추천 게임 수"),
+    limit: int = Query(12, ge=1, le=50, description="반환할 추천 게임 수(취향 추천은 20개)"),
     session_id: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> ApiResponse[RecommendationResult]:
-    """현재 상황 또는 좋아한 게임을 바탕으로 BGG 카탈로그를 추천합니다."""
+    """현재 상황 또는 사용자의 별점을 바탕으로 BGG 카탈로그를 추천합니다."""
 
     ratings = []
     if session_id is not None:
@@ -160,12 +160,19 @@ async def recommend_games(
     except ValueError as error:
         raise ApiError(422, "RECOMMEND-422-001", str(error)) from error
 
-    if ratings:
-        strategy = "behavior-item-hybrid"
-    elif isinstance(preference, TastePreferenceRequest):
-        strategy = "content-item-hybrid"
+    rating_count = recommender.known_rating_count(ratings)
+    personalized = False
+    if isinstance(preference, TastePreferenceRequest):
+        personalized = rating_count >= MIN_TASTE_RATINGS
+        strategy = "rating-profile-hybrid" if personalized else "popularity"
     else:
-        strategy = "content-based"
+        strategy = "behavior-item-hybrid" if ratings else "content-based"
     return ApiResponse[RecommendationResult].ok(
-        RecommendationResult(items=items, strategy=strategy)
+        RecommendationResult(
+            items=items,
+            strategy=strategy,
+            personalized=personalized,
+            ratingCount=rating_count,
+            minRatingsRequired=MIN_TASTE_RATINGS,
+        )
     )

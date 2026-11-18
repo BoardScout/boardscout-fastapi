@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ResponseData = TypeVar("ResponseData")
@@ -65,21 +65,9 @@ class ContextPreferenceRequest(ApiModel):
 
 
 class TastePreferenceRequest(ApiModel):
-    """좋아한 BGG 게임으로 취향 프로필을 만드는 요청입니다."""
+    """사용자가 남긴 별점으로 취향 추천을 요청합니다. 입력 게임은 받지 않습니다."""
 
     recommendation_mode: Literal["taste"] = Field("taste", alias="recommendationMode")
-    liked_game_ids: list[int] = Field(alias="likedGameIds", min_length=3, max_length=20)
-
-    @field_validator("liked_game_ids")
-    @classmethod
-    def validate_liked_game_ids(cls, value: list[int]) -> list[int]:
-        """중복 선택으로 '3개 이상' 조건을 우회하지 못하게 합니다."""
-
-        if any(item_id < 0 for item_id in value):
-            raise ValueError("게임 ID는 0 이상이어야 합니다")
-        if len(set(value)) != len(value):
-            raise ValueError("likedGameIds에는 중복된 게임 ID를 넣을 수 없습니다")
-        return value
 
 
 class UserGameRating(ApiModel):
@@ -110,6 +98,10 @@ class RecommendationItem(ApiModel):
 class RecommendationResult(ApiModel):
     items: list[RecommendationItem]
     strategy: str = "content-based"
+    # 취향 추천이 사용자의 별점으로 개인화되었는지, 아니라면 안내에 쓸 별점 개수 정보.
+    personalized: bool = False
+    rating_count: int = Field(0, alias="ratingCount", ge=0)
+    min_ratings_required: int = Field(3, alias="minRatingsRequired", ge=1)
 
 
 class HealthResponse(ApiModel):
