@@ -34,7 +34,7 @@ class SessionStore(Protocol):
         """Redis 연결 상태를 확인합니다."""
 
     async def find_and_refresh(self, session_id: str) -> UserSessionResponse | None:
-        """sessionId에 해당하는 로그인 사용자를 찾고 만료 시간을 갱신합니다. 없으면 None을 반환합니다."""
+        """sessionId의 로그인 사용자를 찾고 만료 시간을 갱신합니다. 없으면 None입니다."""
 
 
 class RedisSessionStore:
@@ -52,7 +52,10 @@ class RedisSessionStore:
         return bool(await self.client.ping())
 
     async def find_and_refresh(self, session_id: str) -> UserSessionResponse | None:
-        """Redis 세션을 조회해 사용자 정보로 바꾸고 만료 시간을 연장합니다. 세션이 없거나 계약과 다르면 None을 반환합니다."""
+        """Redis 세션을 사용자 정보로 바꾸고 만료 시간을 연장합니다.
+
+        세션이 없거나 JSON이 계약과 다르면 None을 반환합니다.
+        """
 
         # 1단계: Spring과 같은 규칙으로 쿠키를 검증해 임의 키 조회를 막습니다.
         if not SESSION_ID_PATTERN.fullmatch(session_id):

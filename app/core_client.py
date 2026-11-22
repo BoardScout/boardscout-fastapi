@@ -26,7 +26,10 @@ class SpringRatingStore:
         self.cookie_name = cookie_name
 
     async def get_ratings(self, session_id: str) -> list[UserGameRating]:
-        """Spring의 내 별점 API를 호출해 별점 목록을 반환합니다. sessionId 형식이 올바르지 않으면 호출하지 않고 빈 목록을 반환합니다."""
+        """Spring의 내 별점 API를 호출해 별점 목록을 반환합니다.
+
+        sessionId 형식이 올바르지 않으면 Spring을 호출하지 않고 빈 목록을 반환합니다.
+        """
 
         if not SESSION_ID_PATTERN.fullmatch(session_id):
             return []
