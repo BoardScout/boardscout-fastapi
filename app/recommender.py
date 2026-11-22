@@ -49,6 +49,18 @@ MIN_TASTE_RATINGS = 3
 CONFIDENCE_K = 5
 
 
+def _rating_signal(rating: float) -> float:
+    """1~10점 별점을 중간값 5.5점 기준의 -1~1 신호로 바꿉니다. 낮은 별점은 음수입니다."""
+
+    return (rating - 5.5) / 4.5
+
+
+def _rating_quality(game: BoardGame) -> float:
+    """BGG 베이지안 평점(5.5~9점)을 0~1 범위 점수로 정규화합니다."""
+
+    return max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
+
+
 @dataclass(frozen=True)
 class BoardGame:
     item_id: int
@@ -88,7 +100,9 @@ def _map_labels(values: Iterable[str], mapping):
     """BGG 영문 분류를 화면에서 사용하는 테마와 플레이 방식으로 묶습니다."""
 
     normalized = " | ".join(values).lower()
-    return tuple(label for label, keywords in mapping.items() if any(word in normalized for word in keywords))
+    return tuple(
+        label for label, keywords in mapping.items() if any(word in normalized for word in keywords)
+    )
 
 
 def load_games(path: Path) -> list[BoardGame]:
@@ -179,8 +193,7 @@ class ContentBasedRecommender:
         weighted = Counter()
         total_weight = 0.0
         for rating in known:
-            # 1~10점의 중간값인 5.5점을 기준으로 -1~1 범위의 신호를 만듭니다.
-            signal = (rating.rating - 5.5) / 4.5
+            signal = _rating_signal(rating.rating)
             if math.isclose(signal, 0.0):
                 continue
             total_weight += abs(signal)
@@ -207,8 +220,9 @@ class ContentBasedRecommender:
 
         # 1단계: 화면의 3단계 난이도를 BGG complexity 점수의 중심값으로 바꿉니다.
         target_complexity = DIFFICULTY_CENTERS[preference.difficulty]
-        # 2단계: 인원과 시간은 점수가 아니라 실제 플레이 가능 여부로 먼저 거릅니다.
         rated_ids, affinity = self._rating_affinity(ratings)
+        # 2단계: 인원과 시간은 점수가 아니라 실제 플레이 가능 여부로 먼저 거릅니다.
+        # 이미 별점을 남긴 게임도 여기서 뺍니다.
         candidates = [
             game
             for game in self.games
@@ -222,10 +236,12 @@ class ContentBasedRecommender:
             theme_overlap = len(set(preference.themes) & set(game.themes))
             style_overlap = len(set(preference.play_styles) & set(game.play_styles))
             complexity_match = max(0.0, 1.0 - abs(game.complexity - target_complexity) / 3.0)
-            rating_quality = max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
-            score = 0.35 * complexity_match + 0.30 * min(1.0, theme_overlap / 2) + 0.25 * min(
-                1.0, style_overlap / 2
-            ) + 0.10 * rating_quality
+            score = (
+                0.35 * complexity_match
+                + 0.30 * min(1.0, theme_overlap / 2)
+                + 0.25 * min(1.0, style_overlap / 2)
+                + 0.10 * _rating_quality(game)
+            )
             score += 0.20 * affinity.get(game.item_id, 0.0)
             scored.append((score, game))
         # 4단계: 동점이면 검증된 평점과 고정 ID를 사용해 결과 순서를 안정적으로 유지합니다.
@@ -235,7 +251,24 @@ class ContentBasedRecommender:
     def known_rating_count(self, ratings: Iterable[UserGameRating]) -> int:
         """카탈로그에 있는 게임에 남긴 별점 개수를 반환합니다."""
 
-        return len({rating.dataset_item_id for rating in ratings if rating.dataset_item_id in self.by_id})
+        return len(
+            {rating.dataset_item_id for rating in ratings if rating.dataset_item_id in self.by_id}
+        )
+
+    def describe_strategy(
+        self, preference, ratings: Iterable[UserGameRating] = ()
+    ) -> tuple[str, bool]:
+        """recommend()가 어떤 방식으로 계산했는지와 개인화 여부를 반환합니다.
+
+        취향 추천은 별점이 MIN_TASTE_RATINGS개 이상일 때만 개인화하고,
+        상황 추천은 별점이 하나라도 있으면 이웃 게임 점수로 보정합니다.
+        """
+
+        ratings = list(ratings)
+        if isinstance(preference, ContextPreferenceRequest):
+            return ("behavior-item-hybrid" if ratings else "content-based"), False
+        personalized = self.known_rating_count(ratings) >= MIN_TASTE_RATINGS
+        return ("rating-profile-hybrid" if personalized else "popularity"), personalized
 
     def recommend_popular(
         self,
@@ -252,18 +285,12 @@ class ContentBasedRecommender:
         return [
             self._to_item(
                 game,
-                self._rating_quality(game),
+                _rating_quality(game),
                 None,
                 reason="BGG 베이지안 평점이 높은 인기 게임",
             )
             for game in ranked[:limit]
         ]
-
-    @staticmethod
-    def _rating_quality(game: BoardGame) -> float:
-        """BGG 베이지안 평점(5.5~9점)을 0~1 범위 점수로 정규화합니다."""
-
-        return max(0.0, min(1.0, (game.bayes_rating - 5.5) / 3.5))
 
     def recommend_taste(
         self,
@@ -282,11 +309,11 @@ class ContentBasedRecommender:
         if len(rated) < MIN_TASTE_RATINGS:
             return self.recommend_popular(limit, rated.values())
 
-        # 별점을 -1~1로 바꿉니다. 5.5점보다 낮으면 음수라서 비슷한 게임이 아래로 내려갑니다.
+        # 5.5점보다 낮은 별점은 신호가 음수라서 비슷한 게임이 아래로 내려갑니다.
         profile: Counter[str] = Counter()
         item_cf: Counter[int] = Counter()
         for rating in rated.values():
-            signal = (rating.rating - 5.5) / 4.5
+            signal = _rating_signal(rating.rating)
             for token, value in self.vectors[rating.dataset_item_id].items():
                 profile[token] += signal * value
             for other_id, similarity in self.neighbors.get(rating.dataset_item_id, {}).items():
@@ -303,7 +330,7 @@ class ContentBasedRecommender:
                 continue
             content = self._cosine(profile, self.vectors[game.item_id])
             taste = 0.7 * item_cf[game.item_id] / cf_scale + 0.3 * content
-            score = confidence * taste + (1 - confidence) * self._rating_quality(game)
+            score = confidence * taste + (1 - confidence) * _rating_quality(game)
             scored.append((score, game))
         scored.sort(key=lambda pair: (-pair[0], -pair[1].bayes_rating, pair[1].item_id))
         return [self._to_item(game, score, preference) for score, game in scored[:limit]]
@@ -326,16 +353,8 @@ class ContentBasedRecommender:
     ) -> RecommendationItem:
         """내부 게임 정보를 프런트가 사용하는 응답 형식으로 변환합니다."""
 
-        matched_themes = set(getattr(preference, "themes", [])) & set(game.themes)
-        matched_styles = set(getattr(preference, "play_styles", [])) & set(game.play_styles)
-        if reason is not None:
-            pass
-        elif matched_themes:
-            reason = f"선호 테마와 {len(matched_themes)}개 일치하고 인원·시간 조건에 맞는 게임"
-        elif matched_styles:
-            reason = f"원하는 플레이 방식과 {len(matched_styles)}개 일치하는 게임"
-        else:
-            reason = f"{game.categories[0] if game.categories else '보드게임'} 특성이 내 별점 취향과 유사한 게임"
+        if reason is None:
+            reason = ContentBasedRecommender._default_reason(game, preference)
         return RecommendationItem(
             gameId=game.item_id,
             bggId=game.bgg_id,
@@ -353,7 +372,21 @@ class ContentBasedRecommender:
             reason=reason,
         )
 
+    @staticmethod
+    def _default_reason(game: BoardGame, preference) -> str:
+        """일치한 테마, 플레이 방식, 대표 분류 순으로 추천 이유 문구를 고릅니다."""
 
-DEFAULT_GAMES_PATH = Path(__file__).resolve().parents[1] / "data" / "games.csv"
-DEFAULT_NEIGHBORS_PATH = Path(__file__).resolve().parents[1] / "data" / "models" / "item_neighbors.json"
+        matched_themes = set(getattr(preference, "themes", [])) & set(game.themes)
+        if matched_themes:
+            return f"선호 테마와 {len(matched_themes)}개 일치하고 인원·시간 조건에 맞는 게임"
+        matched_styles = set(getattr(preference, "play_styles", [])) & set(game.play_styles)
+        if matched_styles:
+            return f"원하는 플레이 방식과 {len(matched_styles)}개 일치하는 게임"
+        category = game.categories[0] if game.categories else "보드게임"
+        return f"{category} 특성이 내 별점 취향과 유사한 게임"
+
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DEFAULT_GAMES_PATH = DATA_DIR / "games.csv"
+DEFAULT_NEIGHBORS_PATH = DATA_DIR / "models" / "item_neighbors.json"
 recommender = ContentBasedRecommender(load_games(DEFAULT_GAMES_PATH), DEFAULT_NEIGHBORS_PATH)

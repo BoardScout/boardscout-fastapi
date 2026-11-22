@@ -31,7 +31,7 @@ from app.session import RedisSessionStore, SessionStore, get_current_user, get_s
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """프로세스 전체에서 Redis 연결 풀을 만들고 종료 때 닫습니다."""
 
-    # 1단계: decode_responses를 켜 Redis의 bytes를 직접 변환하지 않게 합니다.
+    # decode_responses를 켜면 Redis 응답을 bytes가 아닌 str로 받습니다.
     redis = Redis.from_url(
         settings.redis_url,
         decode_responses=True,
@@ -44,7 +44,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # 2단계: 서버 재시작과 컨테이너 종료 때 연결 풀을 정리합니다.
         await core_client.aclose()
         await redis.aclose()
 
@@ -142,7 +141,7 @@ PreferenceRequest = Annotated[
 async def recommend_games(
     preference: PreferenceRequest,
     request: Request,
-    limit: int = Query(12, ge=1, le=50, description="반환할 추천 게임 수(취향 추천은 20개)"),
+    limit: int = Query(12, ge=1, le=50, description="반환할 추천 게임 수"),
     session_id: str | None = Cookie(default=None, alias=settings.session_cookie_name),
 ) -> ApiResponse[RecommendationResult]:
     """현재 상황 또는 사용자의 별점을 바탕으로 BGG 카탈로그를 추천합니다."""
@@ -160,19 +159,13 @@ async def recommend_games(
     except ValueError as error:
         raise ApiError(422, "RECOMMEND-422-001", str(error)) from error
 
-    rating_count = recommender.known_rating_count(ratings)
-    personalized = False
-    if isinstance(preference, TastePreferenceRequest):
-        personalized = rating_count >= MIN_TASTE_RATINGS
-        strategy = "rating-profile-hybrid" if personalized else "popularity"
-    else:
-        strategy = "behavior-item-hybrid" if ratings else "content-based"
+    strategy, personalized = recommender.describe_strategy(preference, ratings)
     return ApiResponse[RecommendationResult].ok(
         RecommendationResult(
             items=items,
             strategy=strategy,
             personalized=personalized,
-            ratingCount=rating_count,
+            ratingCount=recommender.known_rating_count(ratings),
             minRatingsRequired=MIN_TASTE_RATINGS,
         )
     )
